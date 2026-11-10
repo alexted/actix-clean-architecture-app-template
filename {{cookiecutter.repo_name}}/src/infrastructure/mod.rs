@@ -1,6 +1,5 @@
-pub mod databases;
-pub mod models;
-pub mod repositories;
-pub mod schema;
-pub mod error;
-pub mod services;
+//! Infrastructure layer: settings, the application factory, clients (PostgreSQL), error
+//! handling, middlewares and logging.
+
+pub mod clients;
+pub mod core;

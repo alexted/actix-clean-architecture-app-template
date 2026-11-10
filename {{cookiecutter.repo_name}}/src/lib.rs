@@ -1,8 +1,7 @@
-extern crate core;
+//! Application source root: the api, domain, data and infrastructure layers.
 
-pub mod domain;
-pub mod container;
-pub mod services;
-pub mod infrastructure;
 pub mod api;
-pub mod create_app;
+pub mod container;
+pub mod data;
+pub mod domain;
+pub mod infrastructure;

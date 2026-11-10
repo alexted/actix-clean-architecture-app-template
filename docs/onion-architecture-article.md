@@ -30,10 +30,10 @@ The onion architecture is a layered architecture that is based on the onion mode
 Where each layer in the onion model is used to define the different layers of an application.
 
 For this rust implementation 4 layers are used. 
-* api (app) module: The outermost layer that contains the controllers and the endpoints definition, serialization and deserialization of the data, validation and error handling.
-* infrastructure: Layer that typically include database connections, external APIs calls, logging and configuration management.
-* services: Layer that contains the application's services, which encapsulate the core business logic and provide a higher-level abstraction for the application to interact with the domain entities.
-* domain: The innermost layer that contains the core business logic and entities of the application.
+* api (app) module: The web layer that contains the endpoints of the application, the serialization and deserialization of the data, validation and error handling. The handlers are thin: they parse the request into a use-case request model, execute the use case and return its response model.
+* domain: The innermost layer that contains the use cases of the application (the core business logic) with their request and response models.
+* data: Layer that contains the repositories, which execute the storage statements against the databases and return DTOs to the domain layer.
+* infrastructure: The outermost layer that typically includes database connections, external APIs calls, error handling, middlewares, logging and configuration management.
 
 
 Folder structure:
@@ -44,55 +44,43 @@ Folder structure:
 │   └── run_postgres.sh # Run postgres in docker locally
 ├── src
 │   ├── api
-│   │   ├── controllers
-│   │   │   └── ...  # controllers for the api
-│   │   ├── dto # Data transfer objects  
-│   │   │   └── ... # Individual DTOs
-│   │   └── errors.py
-│   ├── infrastructure
-│   │   ├── services
-│   │   │   └── ...  # Services that use third party libraries or services (e.g. email service)
-│   │   ├── databases
-│   │   │   └── ...  # Database adapaters and initialization
-│   │   ├── repositories
-│   │   │   └── ...  # Repositories for interacting with the databases
-│   │   └── models
-│   │       └── ...  # Database models
+│   │   └── ...  # endpoints of the application
 │   ├── domain
-│   │   ├── mod.rs
-│   │   ├── constants.rs
-│   │   ├── errors.rs
-│   │   ├── models
-│   │   │   └── ...  # Business logic models traits or structs
-│   │   ├── services
-│   │   │   └── ...  # Service traits
-│   │   └── repositories
-│   │       └── ...  # Repository traits 
-│   ├── services
-│   │   └── ...  # Concrete service implementation for interacting with the domain (business logic)
-│   ├── container.rs
-│   ├── create_app.rs # app factory 
-│   ├── lib.rs 
+│   │   ├── use_cases
+│   │   │   └── ...  # the use cases of the application
+│   │   └── interfaces
+│   │       └── ...  # contracts owned by the business logic
+│   ├── data
+│   │   └── ...  # repositories and DTOs
+│   ├── infrastructure
+│   │   ├── core
+│   │   │   └── ...  # settings, application factory, errors, middlewares, logging
+│   │   └── clients
+│   │       └── ...  # database access (e.g. postgres: pool, schema, models)
+│   ├── container.rs     # composition root of the dependencies
+│   ├── lib.rs
 │   └── main.rs
+├── tests
+│   └── ...  # integration tests
 ```
 
-* migrations: Alembic's migration scripts are stored here.
-* scripts: contains the application's configuration settings.
+* migrations: Diesel's migration scripts are stored here.
+* scripts: helper scripts, e.g. running a local postgres container.
 
 ## Is rust suitable for onion architecture?
 The clear separation of concerns and modularity that the onion architecture 
 provides aligns well with Rust's design philosophy. Rust's support for 
 creating libraries and its strict type system allows for building well-defined,
 decoupled and easily testable components, making it a good choice for 
-implementing the domain, services, and infrastructure layers of the
+implementing the domain, data, and infrastructure layers of the
 onion architecture. Additionally, the Rust ecosystem has a growing number
 of libraries and frameworks that support various use cases, such as database 
 access, web development, and more, Actix in particular can easily integrate 
 with other Rust libraries and frameworks, such as Diesel for database access, 
 making it possible to build a full-stack application using the onion architecture with Rust.
 
-The most problems you will face is the sharing your services 
-and repositories between the different layers. There is currently for actix no
+The most problems you will face is the sharing your repositories 
+and other dependencies between the different layers. There is currently for actix no
 standardized or commonly used dependency injection framework. 
 
 
@@ -112,15 +100,15 @@ reuse and sharing of database connections. To perform database operations,
 you can use Diesel's query builder to construct and execute database queries. 
 When used in the infrastructure layer of an onion architecture, Diesel provides 
 a clean and efficient way to interact with a database, abstracting the 
-underlying database technology and allowing the services layer to interact 
+underlying database technology and allowing the data layer to interact 
 with the database through a well-defined interface.
 
 Diesel currently does not support async behaviour. There is now a project being made by
 the creators of diesel to address this issue. [async diesel]()
 
-However, to mitigate this issue, we will leverage actix to run our database orm operations in 
-a seperate thread. We did this by using the `actix_web::web::Data` library as can be seen in the 
-code snippet below: 
+However, to mitigate this issue, we execute the storage statements on a blocking
+thread pool with `actix_threadpool`, so the async handlers of actix are never 
+blocked by the database.
 
 
 
@@ -134,17 +122,20 @@ Actix web still leans heavily on the actor model, therefore you will encounter s
 For example, the `actix_web::web::Data` is a shared state between all the actors.
 In other languages, you would use dependency injection to inject the dependencies into the actors. In rust, you would use the `actix_web::web::Data` to share the state between the actors.
 
-Share all services through the app state.
+Share all dependencies (e.g. the repositories) through the app state. The dependencies 
+are composed once in the `Container` (`src/container.rs`): it builds the repositories from 
+the database pool and the app factory publishes them as `web::Data`, so the endpoints build 
+their use cases from them for every request.
 
 Actix web can be adapted to fit within the onion architecture by using it to 
 implement the application layer. In this architecture, the application layer 
 is responsible for handling the input and output of the application and 
-coordinating the use of services. Actix web provides a simple and intuitive
+coordinating the work of the use cases. Actix web provides a simple and intuitive
 API for defining endpoints, handling HTTP requests, and returning responses, 
-making it a suitable choice for implementing the application layer. It can use 
-the services' public APIs to process requests and return responses, and can 
+making it a suitable choice for implementing the application layer. It executes 
+the domain layer use cases to process requests and return responses, and can 
 integrate with the infrastructure layer, such as using Diesel for database
-access, to perform database operations as needed. By adapting Actix web to 
+access through the data layer repositories. By adapting Actix web to 
 fit within the onion architecture, it becomes a flexible and scalable tool 
 for building web applications with clear separation of concerns and modularity. 
 This makes it easier to maintain and evolve the application over time, as well 
@@ -160,17 +151,18 @@ watch out for. One pitfall is overloading the application layer with too
 much logic, as this can result in a tightly-coupled and difficult-to-maintain 
 application. It is important to maintain a clear separation of concerns 
 and only perform necessary logic in the application layer, delegating other 
-operations to the services layer. 
+operations to the domain layer (the use cases). 
 
 Another pitfall is not properly defining the APIs between the different layers, 
 which can lead to tight coupling and make it difficult to modify or replace components in the future. 
 It is important to carefully design and document the APIs between the different 
 layers to ensure that they are flexible and maintainable over time. 
 
-One example of this principle is the repository trait that we defined in our 
-domain layer. Services that will use a repository for the logic will depend on 
-the trait. Services will be unaware of the concrete implementation that they will use such as a diesel 
-based repository. 
+One example of this principle is the way the use cases of the domain layer 
+interact with the repositories of the data layer. Use cases call the repositories 
+and work with their DTOs; they never see the Diesel models or the query builder. 
+The storage technology stays an implementation detail of the data layer and can be 
+replaced without touching the business logic. 
 
 Additionally, not properly handling errors and exceptions can lead to 
 unexpected behavior and crashes in the application. It is important to 
