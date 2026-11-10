@@ -1,30 +1,33 @@
-use std::sync::Arc;
-use crate::domain::repositories::todo::TodoRepository;
-use crate::domain::services::service_context::ServiceContextService;
-use crate::domain::services::todo::TodoService;
-use crate::infrastructure::databases::postgresql::db_pool;
-use crate::infrastructure::repositories::todo::TodoDieselRepository;
-use crate::infrastructure::services::service_context::ServiceContextServiceImpl;
-use crate::services::todo::TodoServiceImpl;
+//! Composition root of the application dependencies.
+//!
+//! The container constructs the data-layer dependencies once and shares them: the
+//! application factory takes it and publishes its parts as the shared state of the
+//! application, the endpoints build their use cases from them for every request.
 
+use std::sync::Arc;
+
+use crate::data::service_context::repository::ServiceContextRepository;
+use crate::data::todos::repository::TodoRepository;
+use crate::infrastructure::clients::postgres::engine::db_pool;
+
+/// The application dependencies, constructed once and shared through the app state.
 pub struct Container {
-    pub todo_service: Arc<dyn TodoService>,
-    pub service_context_service: Arc<dyn ServiceContextService>
+    /// The todos storage.
+    pub todo_repository: Arc<TodoRepository>,
+    /// The service context storage (the maintenance window).
+    pub service_context_repository: Arc<ServiceContextRepository>,
 }
 
 impl Container {
+    /// Build the dependencies from the process-wide database pool.
     pub fn new() -> Self {
-        let pool = Arc::new(db_pool());
-        let todo_repository: Arc<dyn TodoRepository> = Arc::new(
-            TodoDieselRepository::new(pool.clone())
-        );
-        let todo_service = Arc::new(
-            TodoServiceImpl { repository: todo_repository }
-        );
-        let service_context_service = Arc::new(
-            ServiceContextServiceImpl::new(pool.clone())
-        );
-        Container { todo_service, service_context_service }
+        let pool = db_pool();
+        let todo_repository = Arc::new(TodoRepository::new(pool.clone()));
+        let service_context_repository = Arc::new(ServiceContextRepository::new(pool));
+        Container {
+            todo_repository,
+            service_context_repository,
+        }
     }
 }
 
